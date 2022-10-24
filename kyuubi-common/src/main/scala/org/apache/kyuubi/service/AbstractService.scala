@@ -20,6 +20,10 @@ package org.apache.kyuubi.service
 import org.apache.kyuubi.Logging
 import org.apache.kyuubi.config.KyuubiConf
 
+/**
+ * 实现了简单的Service状态转换和状态确认
+ * @param serviceName
+ */
 abstract class AbstractService(serviceName: String) extends Service with Logging {
   import ServiceState._
   protected var conf: KyuubiConf = _
@@ -35,7 +39,9 @@ abstract class AbstractService(serviceName: String) extends Service with Logging
    * @param conf the configuration of the service
    */
   override def initialize(conf: KyuubiConf): Unit = {
+    // 验证当前的Service State是给定参数的状态
     ensureCurrentState(LATENT)
+
     this.conf = conf
     changeState(INITIALIZED)
     info(s"Service[$serviceName] is initialized.")
@@ -111,6 +117,7 @@ abstract class AbstractService(serviceName: String) extends Service with Logging
    * @throws IllegalStateException if the service state is different from the desired state
    */
   private def ensureCurrentState(currentState: ServiceState): Unit = {
+    // ne: not equals
     if (state ne currentState) {
       throw new IllegalStateException(
         s"For this operation, the current service state must be $currentState instead of $state")

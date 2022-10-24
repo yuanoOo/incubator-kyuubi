@@ -44,6 +44,12 @@ object KyuubiHadoopUtils extends Logging {
     classOf[Credentials].getDeclaredField("tokenMap")
   tokenMapField.setAccessible(true)
 
+  /**
+   * new hadoop conf，同时将KyuubiConf中的所有conf，设置进hadoop conf中
+   * @param conf
+   * @param loadDefaults
+   * @return
+   */
   def newHadoopConf(
       conf: KyuubiConf,
       loadDefaults: Boolean = true): Configuration = {

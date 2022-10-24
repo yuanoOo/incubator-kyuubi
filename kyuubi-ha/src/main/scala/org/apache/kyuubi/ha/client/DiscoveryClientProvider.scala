@@ -44,6 +44,9 @@ object DiscoveryClientProvider extends Logging {
   }
 
   def createDiscoveryClient(conf: KyuubiConf): DiscoveryClient = {
+    // HA_CLIENT_CLASS:
+    //          1、org.apache.kyuubi.ha.client.zookeeper.ZookeeperDiscoveryClient
+    //          2、org.apache.kyuubi.ha.client.etcd.EtcdDiscoveryClient
     val className = conf.get(HighAvailabilityConf.HA_CLIENT_CLASS)
     if (className.isEmpty) {
       throw new KyuubiException(

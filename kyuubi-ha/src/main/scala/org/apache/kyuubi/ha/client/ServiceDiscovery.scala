@@ -50,6 +50,7 @@ abstract class ServiceDiscovery(
   override def initialize(conf: KyuubiConf): Unit = {
     this.conf = conf
 
+    // get ha namespace
     _namespace = conf.get(HA_NAMESPACE)
     _discoveryClient = DiscoveryClientProvider.createDiscoveryClient(conf)
     discoveryClient.monitorState(this)

@@ -34,6 +34,11 @@ import org.apache.kyuubi.service.{AbstractBackendService, AbstractFrontendServic
 import org.apache.kyuubi.util.{KyuubiHadoopUtils, SignalRegister}
 import org.apache.kyuubi.zookeeper.EmbeddedZookeeper
 
+/**
+ * kyuubi主程序，入口类
+ *
+ * object: 相当于java中的静态类
+ */
 object KyuubiServer extends Logging {
   private val zkServer = new EmbeddedZookeeper()
   private[kyuubi] var kyuubiServer: KyuubiServer = _
@@ -41,6 +46,7 @@ object KyuubiServer extends Logging {
 
   def startServer(conf: KyuubiConf): KyuubiServer = {
     hadoopConf = KyuubiHadoopUtils.newHadoopConf(conf)
+
     if (!ServiceDiscovery.supportServiceDiscovery(conf)) {
       zkServer.initialize(conf)
       zkServer.start()
@@ -87,8 +93,12 @@ object KyuubiServer extends Logging {
       s" Trino: $TRINO_COMPILE_VERSION")
     info(s"Using Scala ${Properties.versionString}, ${Properties.javaVmName}," +
       s" ${Properties.javaVersion}")
+
+    // 信号寄存器
     SignalRegister.registerLogger(logger)
-    val conf = new KyuubiConf().loadFileDefaults()
+
+    // 加载配置文件
+    val conf: KyuubiConf  = new KyuubiConf().loadFileDefaults()
     UserGroupInformation.setConfiguration(KyuubiHadoopUtils.newHadoopConf(conf))
     startServer(conf)
   }

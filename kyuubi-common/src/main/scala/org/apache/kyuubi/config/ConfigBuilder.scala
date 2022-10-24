@@ -23,6 +23,12 @@ import java.util.regex.PatternSyntaxException
 import scala.util.{Failure, Success, Try}
 import scala.util.matching.Regex
 
+/**
+ * case class:
+ *  样例类非常适合用于不可变的数据。
+ *  注意在实例化样例类Book时，并没有使用关键字new，这是因为样例类有一个默认的apply方法来负责对象的创建。
+ * @param key
+ */
 private[kyuubi] case class ConfigBuilder(key: String) {
 
   private[config] var _doc = ""

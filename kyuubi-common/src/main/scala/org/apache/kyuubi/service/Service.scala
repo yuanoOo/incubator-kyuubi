@@ -19,6 +19,11 @@ package org.apache.kyuubi.service
 
 import org.apache.kyuubi.config.KyuubiConf
 
+/**
+ * kyuubi Service interface
+ *
+ * trait link interface in java
+ */
 trait Service {
   import ServiceState._
 
