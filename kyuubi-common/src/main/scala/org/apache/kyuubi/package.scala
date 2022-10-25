@@ -21,6 +21,9 @@ import java.util.Properties
 
 import scala.util.Try
 
+/**
+ * scala package object
+ */
 package object kyuubi {
   private object BuildInfo {
     private val buildFile = "kyuubi-version-info.properties"

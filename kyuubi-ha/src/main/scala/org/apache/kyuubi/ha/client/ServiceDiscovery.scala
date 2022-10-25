@@ -79,7 +79,7 @@ abstract class ServiceDiscovery(
 object ServiceDiscovery extends Logging {
 
   def supportServiceDiscovery(conf: KyuubiConf): Boolean = {
-    val zkEnsemble = conf.get(HA_ADDRESSES)
+    val zkEnsemble: String = conf.get(HA_ADDRESSES)
     zkEnsemble != null && zkEnsemble.nonEmpty
   }
 }

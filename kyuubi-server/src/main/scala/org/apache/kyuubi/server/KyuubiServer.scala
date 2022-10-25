@@ -47,6 +47,7 @@ object KyuubiServer extends Logging {
   def startServer(conf: KyuubiConf): KyuubiServer = {
     hadoopConf = KyuubiHadoopUtils.newHadoopConf(conf)
 
+    // 判断kyuubi conf中是否配置了ServiceDiscovery：通过kyuubi.ha.addresses
     if (!ServiceDiscovery.supportServiceDiscovery(conf)) {
       zkServer.initialize(conf)
       zkServer.start()
