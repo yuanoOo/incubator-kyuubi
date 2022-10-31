@@ -112,11 +112,14 @@ class KyuubiSessionImpl(
   private[kyuubi] def openEngineSession(extraEngineLog: Option[OperationLog] = None): Unit = {
     withDiscoveryClient(sessionConf) { discoveryClient =>
       var openEngineSessionConf = optimizedConf
+
+      // 主要设置隔离级别：connection、user。。。
       if (engineCredentials.nonEmpty) {
         sessionConf.set(KYUUBI_ENGINE_CREDENTIALS_KEY, engineCredentials)
         openEngineSessionConf =
           optimizedConf ++ Map(KYUUBI_ENGINE_CREDENTIALS_KEY -> engineCredentials)
       }
+
       val passwd =
         if (sessionManager.getConf.get(ENGINE_SECURITY_ENABLED)) {
           InternalSecurityAccessor.get().issueToken()

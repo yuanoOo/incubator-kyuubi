@@ -21,6 +21,9 @@ import java.time.Duration
 
 import org.apache.kyuubi.config.{ConfigBuilder, ConfigEntry, KyuubiConf, OptionalConfigEntry}
 
+/**
+ * CTL: Managing kyuubi servers and engines Tool
+ */
 object CtlConf {
 
   private def buildConf(key: String): ConfigBuilder = KyuubiConf.buildConf(key)

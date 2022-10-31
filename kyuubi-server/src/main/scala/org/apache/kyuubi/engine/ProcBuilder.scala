@@ -195,6 +195,7 @@ trait ProcBuilder {
   def validateConf: Unit = {}
 
   final def start: Process = synchronized {
+    // JVM创建一个进程
     process = processBuilder.start()
     processLaunched = true
     val reader = Files.newBufferedReader(engineLog.toPath, StandardCharsets.UTF_8)

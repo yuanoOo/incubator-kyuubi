@@ -17,6 +17,10 @@
 
 package org.apache.kyuubi.config
 
+
+/**
+ * Kyuubi保留key列表
+ */
 object KyuubiReservedKeys {
   final val KYUUBI_CLIENT_IP_KEY = "kyuubi.client.ipAddress"
   final val KYUUBI_SESSION_USER_KEY = "kyuubi.session.user"
