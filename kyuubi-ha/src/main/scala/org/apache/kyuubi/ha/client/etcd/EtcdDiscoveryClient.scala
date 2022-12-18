@@ -224,8 +224,10 @@ class EtcdDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
         val (host, port) = DiscoveryClient.parseInstanceHostPort(instance)
         val version = p.split(";").find(_.startsWith("version=")).map(_.stripPrefix("version="))
         val engineRefId = p.split(";").find(_.startsWith("refId=")).map(_.stripPrefix("refId="))
+        val attributes =
+          p.split(";").map(_.split("=", 2)).filter(_.size == 2).map(kv => (kv.head, kv.last)).toMap
         info(s"Get service instance:$instance and version:$version under $namespace")
-        ServiceNodeInfo(namespace, p, host, port, version, engineRefId)
+        ServiceNodeInfo(namespace, p, host, port, version, engineRefId, attributes)
       }
     } catch {
       case _: Exception if silent => Nil
@@ -244,7 +246,13 @@ class EtcdDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
     val instance = serviceDiscovery.fe.connectionUrl
     val watcher = new DeRegisterWatcher(instance, serviceDiscovery)
 
-    val serviceNode = createPersistentNode(conf, namespace, instance, version, external)
+    val serviceNode = createPersistentNode(
+      conf,
+      namespace,
+      instance,
+      version,
+      external,
+      serviceDiscovery.fe.attributes)
 
     client.getWatchClient.watch(ByteSequence.from(serviceNode.path.getBytes()), watcher)
 
@@ -295,7 +303,7 @@ class EtcdDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
       ByteSequence.from(initData.getBytes())).get()
   }
 
-  def getAndIncrement(path: String): Int = {
+  def getAndIncrement(path: String, delta: Int = 1): Int = {
     val lockPath = s"${path}_tmp_for_lock"
     tryWithLock(lockPath, 60 * 1000) {
       if (pathNonExists(path)) {
@@ -303,7 +311,7 @@ class EtcdDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
         setData(path, String.valueOf(0).getBytes)
       }
       val s = new String(getData(path)).toInt
-      setData(path, String.valueOf(s + 1).getBytes)
+      setData(path, String.valueOf(s + delta).getBytes)
       s
     }
   }
@@ -313,15 +321,18 @@ class EtcdDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
       namespace: String,
       instance: String,
       version: Option[String] = None,
-      external: Boolean = false): ServiceNode = {
+      external: Boolean = false,
+      attributes: Map[String, String] = Map.empty): ServiceNode = {
     val ns = DiscoveryPaths.makePath(null, namespace)
     create(ns, "PERSISTENT")
 
     val session = conf.get(HA_ENGINE_REF_ID)
       .map(refId => s"refId=$refId;").getOrElse("")
+    val extraInfo = attributes.map(kv => kv._1 + "=" + kv._2).mkString(";", ";", "")
     val pathPrefix = DiscoveryPaths.makePath(
       namespace,
-      s"serviceUri=$instance;version=${version.getOrElse(KYUUBI_VERSION)};${session}sequence=")
+      s"serviceUri=$instance;version=${version.getOrElse(KYUUBI_VERSION)}" +
+        s"${extraInfo.stripSuffix(";")};${session}sequence=")
     val znode = instance
 
     var leaseId: Long = LEASE_NULL_VALUE

@@ -17,14 +17,26 @@
 
 package org.apache.kyuubi.plugin.spark.authz.util
 
+import java.nio.charset.StandardCharsets
+import java.security.KeyFactory
+import java.security.PublicKey
+import java.security.Signature
+import java.security.interfaces.ECPublicKey
+import java.security.spec.X509EncodedKeySpec
+import java.util.Base64
+
 import scala.util.{Failure, Success, Try}
 
+import org.apache.commons.lang3.StringUtils
 import org.apache.hadoop.security.UserGroupInformation
 import org.apache.spark.{SPARK_VERSION, SparkContext}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, View}
 import org.apache.spark.sql.connector.catalog.{CatalogPlugin, Identifier, Table, TableCatalog}
+
+import org.apache.kyuubi.plugin.spark.authz.AccessControlException
+import org.apache.kyuubi.plugin.spark.authz.util.ReservedKeys._
 
 private[authz] object AuthZUtils {
 
@@ -40,7 +52,7 @@ private[authz] object AuthZUtils {
       case Success(value) => value.asInstanceOf[T]
       case Failure(e) =>
         val candidates = o.getClass.getDeclaredFields.map(_.getName).mkString("[", ",", "]")
-        throw new RuntimeException(s"$name not in $candidates", e)
+        throw new RuntimeException(s"$name not in ${o.getClass} $candidates", e)
     }
   }
 
@@ -50,10 +62,23 @@ private[authz] object AuthZUtils {
       obj: AnyRef,
       methodName: String,
       args: (Class[_], AnyRef)*): AnyRef = {
-    val (types, values) = args.unzip
-    val method = obj.getClass.getMethod(methodName, types: _*)
-    method.setAccessible(true)
-    method.invoke(obj, values: _*)
+    try {
+      val (types, values) = args.unzip
+      val method = obj.getClass.getMethod(methodName, types: _*)
+      method.setAccessible(true)
+      method.invoke(obj, values: _*)
+    } catch {
+      case e: NoSuchMethodException =>
+        val candidates = obj.getClass.getMethods.map(_.getName).mkString("[", ",", "]")
+        throw new RuntimeException(s"$methodName not in ${obj.getClass} $candidates", e)
+    }
+  }
+
+  def invokeAs[T](
+      obj: AnyRef,
+      methodName: String,
+      args: (Class[_], AnyRef)*): T = {
+    invoke(obj, methodName, args: _*).asInstanceOf[T]
   }
 
   def invokeStatic(
@@ -72,8 +97,15 @@ private[authz] object AuthZUtils {
    * @return the user name
    */
   def getAuthzUgi(spark: SparkContext): UserGroupInformation = {
+    val isSessionUserVerifyEnabled =
+      spark.getConf.getBoolean(s"spark.$KYUUBI_SESSION_USER_SIGN_ENABLED", defaultValue = false)
+
     // kyuubi.session.user is only used by kyuubi
-    val user = spark.getLocalProperty("kyuubi.session.user")
+    val user = spark.getLocalProperty(KYUUBI_SESSION_USER)
+    if (isSessionUserVerifyEnabled) {
+      verifyKyuubiSessionUser(spark, user)
+    }
+
     if (user != null && user != UserGroupInformation.getCurrentUser.getShortUserName) {
       UserGroupInformation.createRemoteUser(user)
     } else {
@@ -174,5 +206,39 @@ private[authz] object AuthZUtils {
 
   def quote(parts: Seq[String]): String = {
     parts.map(quoteIfNeeded).mkString(".")
+  }
+
+  private def verifyKyuubiSessionUser(spark: SparkContext, user: String): Unit = {
+    def illegalAccessWithUnverifiedUser = {
+      throw new AccessControlException(s"Invalid user identifier [$user]")
+    }
+
+    try {
+      val userPubKeyBase64 = spark.getLocalProperty(KYUUBI_SESSION_SIGN_PUBLICKEY)
+      val userSignBase64 = spark.getLocalProperty(KYUUBI_SESSION_USER_SIGN)
+      if (StringUtils.isAnyBlank(user, userPubKeyBase64, userSignBase64)) {
+        illegalAccessWithUnverifiedUser
+      }
+      if (!verifySignWithECDSA(user, userSignBase64, userPubKeyBase64)) {
+        illegalAccessWithUnverifiedUser
+      }
+    } catch {
+      case _: Exception =>
+        illegalAccessWithUnverifiedUser
+    }
+  }
+
+  private def verifySignWithECDSA(
+      plainText: String,
+      signatureBase64: String,
+      publicKeyBase64: String): Boolean = {
+    val pubKeyBytes = Base64.getDecoder.decode(publicKeyBase64)
+    val publicKey: PublicKey = KeyFactory.getInstance("EC")
+      .generatePublic(new X509EncodedKeySpec(pubKeyBytes)).asInstanceOf[ECPublicKey]
+    val publicSignature = Signature.getInstance("SHA256withECDSA")
+    publicSignature.initVerify(publicKey)
+    publicSignature.update(plainText.getBytes(StandardCharsets.UTF_8))
+    val signatureBytes = Base64.getDecoder.decode(signatureBase64)
+    publicSignature.verify(signatureBytes)
   }
 }

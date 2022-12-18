@@ -20,7 +20,7 @@ package org.apache.kyuubi.ctl
 import org.apache.kyuubi.{KYUUBI_VERSION, KyuubiFunSuite}
 import org.apache.kyuubi.ctl.RestClientFactory.withKyuubiRestClient
 import org.apache.kyuubi.ctl.cli.ControlCliArguments
-import org.apache.kyuubi.ctl.opt.ControlAction
+import org.apache.kyuubi.ctl.opt.{ControlAction, ControlObject}
 import org.apache.kyuubi.ha.HighAvailabilityConf.HA_NAMESPACE
 
 class ControlCliArgumentsSuite extends KyuubiFunSuite with TestPrematureExit {
@@ -161,8 +161,14 @@ class ControlCliArgumentsSuite extends KyuubiFunSuite with TestPrematureExit {
       zkQuorum,
       "--namespace",
       namespace)
-    val opArgs = new ControlCliArguments(args2)
+    var opArgs = new ControlCliArguments(args2)
     assert(opArgs.cliConfig.action == ControlAction.LIST)
+
+    val args3 = Array(
+      "list",
+      "session")
+    opArgs = new ControlCliArguments(args3)
+    assert(opArgs.cliConfig.resource === ControlObject.SESSION)
   }
 
   test("test get/delete action arguments") {
@@ -416,7 +422,7 @@ class ControlCliArgumentsSuite extends KyuubiFunSuite with TestPrematureExit {
          |  -esl, --engine-share-level <value>
          |                           The engine share level this engine belong to.
          |
-         |Command: list [batch|server|engine]
+         |Command: list [batch|session|server|engine]
          |${"\t"}List information about resources.
          |Command: list batch [options]
          |${"\t"}List batch session info.
@@ -427,6 +433,8 @@ class ControlCliArgumentsSuite extends KyuubiFunSuite with TestPrematureExit {
          |  --endTime <value>        Batch end time, should be in yyyyMMddHHmmss format.
          |  --from <value>           Specify which record to start from retrieving info.
          |  --size <value>           The max number of records returned in the query.
+         |Command: list session
+         |${"\t"}List all the live sessions
          |Command: list server
          |${"\t"}List all the service nodes for a particular domain
          |Command: list engine [options]
@@ -492,12 +500,14 @@ class ControlCliArgumentsSuite extends KyuubiFunSuite with TestPrematureExit {
       "--hostUrl",
       "https://kyuubi.test.com",
       "--conf",
-      s"${CtlConf.CTL_REST_CLIENT_CONNECT_TIMEOUT.key}=5000")
+      s"${CtlConf.CTL_REST_CLIENT_CONNECT_TIMEOUT.key}=5000",
+      "--conf",
+      s"${CtlConf.CTL_REST_CLIENT_REQUEST_MAX_ATTEMPTS.key}=1")
     val opArgs = new ControlCliArguments(args)
     withKyuubiRestClient(opArgs.cliConfig, null, opArgs.command.conf) { kyuubiRestClient =>
       assert(kyuubiRestClient.getConf.getConnectTimeout == 5000)
       assert(kyuubiRestClient.getConf.getSocketTimeout == 120000)
-      assert(kyuubiRestClient.getConf.getMaxAttempts == 3)
+      assert(kyuubiRestClient.getConf.getMaxAttempts == 1)
       assert(kyuubiRestClient.getConf.getAttemptWaitTime == 3000)
     }
   }

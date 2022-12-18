@@ -57,7 +57,6 @@ import org.apache.kyuubi.ha.client.ServiceNodeInfo
 import org.apache.kyuubi.ha.client.zookeeper.ZookeeperClientProvider.buildZookeeperClient
 import org.apache.kyuubi.ha.client.zookeeper.ZookeeperClientProvider.getGracefulStopThreadDelay
 import org.apache.kyuubi.ha.client.zookeeper.ZookeeperDiscoveryClient.connectionChecker
-import org.apache.kyuubi.util.KyuubiHadoopUtils
 import org.apache.kyuubi.util.ThreadUtils
 
 class ZookeeperDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
@@ -219,8 +218,10 @@ class ZookeeperDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
         val (host, port) = DiscoveryClient.parseInstanceHostPort(instance)
         val version = p.split(";").find(_.startsWith("version=")).map(_.stripPrefix("version="))
         val engineRefId = p.split(";").find(_.startsWith("refId=")).map(_.stripPrefix("refId="))
+        val attributes =
+          p.split(";").map(_.split("=", 2)).filter(_.size == 2).map(kv => (kv.head, kv.last)).toMap
         info(s"Get service instance:$instance and version:$version under $namespace")
-        ServiceNodeInfo(namespace, p, host, port, version, engineRefId)
+        ServiceNodeInfo(namespace, p, host, port, version, engineRefId, attributes)
       }
     } catch {
       case _: Exception if silent => Nil
@@ -238,7 +239,13 @@ class ZookeeperDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
       external: Boolean = false): Unit = {
     val instance = serviceDiscovery.fe.connectionUrl
     watcher = new DeRegisterWatcher(instance, serviceDiscovery)
-    serviceNode = createPersistentNode(conf, namespace, instance, version, external)
+    serviceNode = createPersistentNode(
+      conf,
+      namespace,
+      instance,
+      version,
+      external,
+      serviceDiscovery.fe.attributes)
     // Set a watch on the serviceNode
     watchNode()
   }
@@ -296,11 +303,11 @@ class ZookeeperDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
     secretNode.start()
   }
 
-  def getAndIncrement(path: String): Int = {
+  def getAndIncrement(path: String, delta: Int = 1): Int = {
     val dai = new DistributedAtomicInteger(zkClient, path, new RetryForever(1000))
     var atomicVal: AtomicValue[Integer] = null
     do {
-      atomicVal = dai.increment()
+      atomicVal = dai.add(delta)
     } while (atomicVal == null || !atomicVal.succeeded())
     atomicVal.preValue().intValue()
   }
@@ -330,8 +337,7 @@ class ZookeeperDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
     confsToPublish += ("hive.server2.authentication" -> authenticationMethod)
     if (authenticationMethod.equalsIgnoreCase("KERBEROS")) {
       confsToPublish += ("hive.server2.authentication.kerberos.principal" ->
-        conf.get(KyuubiConf.SERVER_PRINCIPAL).map(KyuubiHadoopUtils.getServerPrincipal)
-          .getOrElse(""))
+        conf.get(KyuubiConf.SERVER_PRINCIPAL).getOrElse(""))
     }
     confsToPublish.map { case (k, v) => k + "=" + v }.mkString(";")
   }
@@ -341,7 +347,8 @@ class ZookeeperDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
       namespace: String,
       instance: String,
       version: Option[String] = None,
-      external: Boolean = false): PersistentNode = {
+      external: Boolean = false,
+      attributes: Map[String, String] = Map.empty): PersistentNode = {
     val ns = ZKPaths.makePath(null, namespace)
     try {
       zkClient
@@ -357,9 +364,11 @@ class ZookeeperDiscoveryClient(conf: KyuubiConf) extends DiscoveryClient {
 
     val session = conf.get(HA_ENGINE_REF_ID)
       .map(refId => s"refId=$refId;").getOrElse("")
+    val extraInfo = attributes.map(kv => kv._1 + "=" + kv._2).mkString(";", ";", "")
     val pathPrefix = ZKPaths.makePath(
       namespace,
-      s"serviceUri=$instance;version=${version.getOrElse(KYUUBI_VERSION)};${session}sequence=")
+      s"serviceUri=$instance;version=${version.getOrElse(KYUUBI_VERSION)}" +
+        s"${extraInfo.stripSuffix(";")};${session}sequence=")
     var localServiceNode: PersistentNode = null
     val createMode =
       if (external) CreateMode.PERSISTENT_SEQUENTIAL

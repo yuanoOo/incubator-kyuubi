@@ -73,12 +73,12 @@ class AdminResourceSuite extends KyuubiFunSuite with RestFrontendTestHelper {
     conf.set(KyuubiConf.FRONTEND_THRIFT_BINARY_BIND_PORT, 0)
     conf.set(HighAvailabilityConf.HA_NAMESPACE, "kyuubi_test")
     conf.set(KyuubiConf.ENGINE_IDLE_TIMEOUT, 180000L)
-    val engine = new EngineRef(conf.clone, Utils.currentUser, id, null)
+    val engine = new EngineRef(conf.clone, Utils.currentUser, "grp", id, null)
 
     val engineSpace = DiscoveryPaths.makePath(
       s"kyuubi_test_${KYUUBI_VERSION}_USER_SPARK_SQL",
       Utils.currentUser,
-      Array("default"))
+      "default")
 
     withDiscoveryClient(conf) { client =>
       engine.getOrCreate(client)
@@ -100,7 +100,9 @@ class AdminResourceSuite extends KyuubiFunSuite with RestFrontendTestHelper {
 
       assert(200 == response.getStatus)
       assert(client.pathExists(engineSpace))
-      assert(client.getChildren(engineSpace).size == 0)
+      eventually(timeout(5.seconds), interval(100.milliseconds)) {
+        assert(client.getChildren(engineSpace).size == 0, s"refId same with $id?")
+      }
 
       // kill the engine application
       engineMgr.killApplication(None, id)
@@ -118,11 +120,11 @@ class AdminResourceSuite extends KyuubiFunSuite with RestFrontendTestHelper {
     conf.set(KyuubiConf.ENGINE_IDLE_TIMEOUT, 180000L)
 
     val id = UUID.randomUUID().toString
-    val engine = new EngineRef(conf.clone, Utils.currentUser, id, null)
+    val engine = new EngineRef(conf.clone, Utils.currentUser, "grp", id, null)
     val engineSpace = DiscoveryPaths.makePath(
       s"kyuubi_test_${KYUUBI_VERSION}_CONNECTION_SPARK_SQL",
       Utils.currentUser,
-      Array(id))
+      id)
 
     withDiscoveryClient(conf) { client =>
       engine.getOrCreate(client)
@@ -154,12 +156,12 @@ class AdminResourceSuite extends KyuubiFunSuite with RestFrontendTestHelper {
     conf.set(KyuubiConf.FRONTEND_THRIFT_BINARY_BIND_PORT, 0)
     conf.set(HighAvailabilityConf.HA_NAMESPACE, "kyuubi_test")
     conf.set(KyuubiConf.ENGINE_IDLE_TIMEOUT, 180000L)
-    val engine = new EngineRef(conf.clone, Utils.currentUser, id, null)
+    val engine = new EngineRef(conf.clone, Utils.currentUser, id, "grp", null)
 
     val engineSpace = DiscoveryPaths.makePath(
       s"kyuubi_test_${KYUUBI_VERSION}_USER_SPARK_SQL",
       Utils.currentUser,
-      Array(""))
+      "")
 
     withDiscoveryClient(conf) { client =>
       engine.getOrCreate(client)
@@ -203,21 +205,21 @@ class AdminResourceSuite extends KyuubiFunSuite with RestFrontendTestHelper {
     val engineSpace = DiscoveryPaths.makePath(
       s"kyuubi_test_${KYUUBI_VERSION}_CONNECTION_SPARK_SQL",
       Utils.currentUser,
-      Array(""))
+      "")
 
     val id1 = UUID.randomUUID().toString
-    val engine1 = new EngineRef(conf.clone, Utils.currentUser, id1, null)
+    val engine1 = new EngineRef(conf.clone, Utils.currentUser, "grp", id1, null)
     val engineSpace1 = DiscoveryPaths.makePath(
       s"kyuubi_test_${KYUUBI_VERSION}_CONNECTION_SPARK_SQL",
       Utils.currentUser,
-      Array(id1))
+      id1)
 
     val id2 = UUID.randomUUID().toString
-    val engine2 = new EngineRef(conf.clone, Utils.currentUser, id2, null)
+    val engine2 = new EngineRef(conf.clone, Utils.currentUser, "grp", id2, null)
     val engineSpace2 = DiscoveryPaths.makePath(
       s"kyuubi_test_${KYUUBI_VERSION}_CONNECTION_SPARK_SQL",
       Utils.currentUser,
-      Array(id2))
+      id2)
 
     withDiscoveryClient(conf) { client =>
       engine1.getOrCreate(client)

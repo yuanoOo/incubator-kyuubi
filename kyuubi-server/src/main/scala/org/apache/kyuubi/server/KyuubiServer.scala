@@ -30,15 +30,11 @@ import org.apache.kyuubi.events.{EventBus, KyuubiServerInfoEvent, ServerEventHan
 import org.apache.kyuubi.ha.HighAvailabilityConf._
 import org.apache.kyuubi.ha.client.{AuthTypes, ServiceDiscovery}
 import org.apache.kyuubi.metrics.{MetricsConf, MetricsSystem}
+import org.apache.kyuubi.server.metadata.jdbc.JDBCMetadataStoreConf
 import org.apache.kyuubi.service.{AbstractBackendService, AbstractFrontendService, Serverable, ServiceState}
 import org.apache.kyuubi.util.{KyuubiHadoopUtils, SignalRegister}
 import org.apache.kyuubi.zookeeper.EmbeddedZookeeper
 
-/**
- * kyuubi主程序，入口类
- *
- * object: 相当于java中的静态类
- */
 object KyuubiServer extends Logging {
   private val zkServer = new EmbeddedZookeeper()
   private[kyuubi] var kyuubiServer: KyuubiServer = _
@@ -46,8 +42,6 @@ object KyuubiServer extends Logging {
 
   def startServer(conf: KyuubiConf): KyuubiServer = {
     hadoopConf = KyuubiHadoopUtils.newHadoopConf(conf)
-
-    // 判断kyuubi conf中是否配置了ServiceDiscovery：通过kyuubi.ha.addresses
     if (!ServiceDiscovery.supportServiceDiscovery(conf)) {
       zkServer.initialize(conf)
       zkServer.start()
@@ -94,12 +88,11 @@ object KyuubiServer extends Logging {
       s" Trino: $TRINO_COMPILE_VERSION")
     info(s"Using Scala ${Properties.versionString}, ${Properties.javaVmName}," +
       s" ${Properties.javaVersion}")
-
-    // 信号寄存器
     SignalRegister.registerLogger(logger)
 
-    // 加载配置文件
-    val conf: KyuubiConf  = new KyuubiConf().loadFileDefaults()
+    // register conf entries
+    JDBCMetadataStoreConf
+    val conf = new KyuubiConf().loadFileDefaults()
     UserGroupInformation.setConfiguration(KyuubiHadoopUtils.newHadoopConf(conf))
     startServer(conf)
   }
@@ -131,6 +124,9 @@ class KyuubiServer(name: String) extends Serverable(name) {
       case MYSQL =>
         warn("MYSQL frontend protocol is experimental.")
         new KyuubiMySQLFrontendService(this)
+      case TRINO =>
+        warn("Trio frontend protocol is experimental.")
+        new KyuubiTrinoFrontendService(this)
       case other =>
         throw new UnsupportedOperationException(s"Frontend protocol $other is not supported yet.")
     }

@@ -23,7 +23,7 @@ import scala.collection.JavaConverters.asScalaBufferConverter
 
 import org.apache.kyuubi.{KYUUBI_VERSION, RestClientTestHelper}
 import org.apache.kyuubi.client.{AdminRestApi, KyuubiRestClient}
-import org.apache.kyuubi.config.KyuubiConf
+import org.apache.kyuubi.config.{KyuubiConf, KyuubiReservedKeys}
 import org.apache.kyuubi.engine.EngineRef
 import org.apache.kyuubi.ha.HighAvailabilityConf
 import org.apache.kyuubi.ha.client.DiscoveryClientProvider.withDiscoveryClient
@@ -47,12 +47,12 @@ class AdminRestApiSuite extends RestClientTestHelper {
     conf.set(KyuubiConf.ENGINE_IDLE_TIMEOUT, 180000L)
     conf.set(KyuubiConf.AUTHENTICATION_METHOD, Seq("LDAP", "CUSTOM"))
     val user = ldapUser
-    val engine = new EngineRef(conf.clone, user, id, null)
+    val engine = new EngineRef(conf.clone, user, "grp", id, null)
 
     val engineSpace = DiscoveryPaths.makePath(
       s"kyuubi_test_${KYUUBI_VERSION}_USER_SPARK_SQL",
       user,
-      Array("default"))
+      "default")
 
     withDiscoveryClient(conf) { client =>
       engine.getOrCreate(client)
@@ -76,6 +76,7 @@ class AdminRestApiSuite extends RestClientTestHelper {
     assert(engines(0).getSharelevel == "USER")
     assert(engines(0).getSubdomain == "default")
     assert(engines(0).getNamespace == engineSpace)
+    assert(engines(0).getAttributes.get(KyuubiReservedKeys.KYUUBI_ENGINE_ID).startsWith("local-"))
 
     val result = adminRestApi.deleteEngine("spark_sql", "user", "default", "")
     assert(result == s"Engine ${engineSpace} is deleted successfully.")

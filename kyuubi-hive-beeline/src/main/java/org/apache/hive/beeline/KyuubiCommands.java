@@ -17,11 +17,12 @@
 
 package org.apache.hive.beeline;
 
+import static org.apache.kyuubi.jdbc.hive.JdbcConnectionParams.*;
+
 import java.io.*;
 import java.sql.*;
 import java.util.*;
 import org.apache.hive.beeline.logs.KyuubiBeelineInPlaceUpdateStream;
-import org.apache.kyuubi.jdbc.hive.JdbcConnectionParams;
 import org.apache.kyuubi.jdbc.hive.KyuubiStatement;
 import org.apache.kyuubi.jdbc.hive.Utils;
 import org.apache.kyuubi.jdbc.hive.logs.InPlaceUpdateStream;
@@ -44,7 +45,7 @@ public class KyuubiCommands extends Commands {
 
   /** Extract and clean up the first command in the input. */
   private String getFirstCmd(String cmd, int length) {
-    return cmd.substring(length).trim();
+    return cmd.substring(length);
   }
 
   private String[] tokenizeCmd(String cmd) {
@@ -96,7 +97,6 @@ public class KyuubiCommands extends Commands {
       }
       String[] cmds = lines.split(";");
       for (String c : cmds) {
-        c = c.trim();
         if (!executeInternal(c, false)) {
           return false;
         }
@@ -260,10 +260,9 @@ public class KyuubiCommands extends Commands {
       beeLine.handleException(e);
     }
 
-    line = line.trim();
     List<String> cmdList = getCmdList(line, entireLineAsCommand);
     for (int i = 0; i < cmdList.size(); i++) {
-      String sql = cmdList.get(i).trim();
+      String sql = cmdList.get(i);
       if (sql.length() != 0) {
         if (!executeInternal(sql, call)) {
           return false;
@@ -425,31 +424,25 @@ public class KyuubiCommands extends Commands {
         getProperty(
             props,
             new String[] {
-              JdbcConnectionParams.PROPERTY_URL, "javax.jdo.option.ConnectionURL", "ConnectionURL",
+              PROPERTY_URL, "javax.jdo.option.ConnectionURL", "ConnectionURL",
             });
     String driver =
         getProperty(
             props,
             new String[] {
-              JdbcConnectionParams.PROPERTY_DRIVER,
-              "javax.jdo.option.ConnectionDriverName",
-              "ConnectionDriverName",
+              PROPERTY_DRIVER, "javax.jdo.option.ConnectionDriverName", "ConnectionDriverName",
             });
     String username =
         getProperty(
             props,
             new String[] {
-              JdbcConnectionParams.AUTH_USER,
-              "javax.jdo.option.ConnectionUserName",
-              "ConnectionUserName",
+              AUTH_USER, "javax.jdo.option.ConnectionUserName", "ConnectionUserName",
             });
     String password =
         getProperty(
             props,
             new String[] {
-              JdbcConnectionParams.AUTH_PASSWD,
-              "javax.jdo.option.ConnectionPassword",
-              "ConnectionPassword",
+              AUTH_PASSWD, "javax.jdo.option.ConnectionPassword", "ConnectionPassword",
             });
 
     if (url == null || url.length() == 0) {
@@ -461,28 +454,29 @@ public class KyuubiCommands extends Commands {
       }
     }
 
-    String auth = getProperty(props, new String[] {JdbcConnectionParams.AUTH_TYPE});
+    String auth = getProperty(props, new String[] {AUTH_TYPE});
     if (auth == null) {
       auth = beeLine.getOpts().getAuthType();
       if (auth != null) {
-        props.setProperty(JdbcConnectionParams.AUTH_TYPE, auth);
+        props.setProperty(AUTH_TYPE, auth);
       }
     }
 
     beeLine.info("Connecting to " + url);
-    if (Utils.parsePropertyFromUrl(url, JdbcConnectionParams.AUTH_PRINCIPAL) == null) {
+    if (Utils.parsePropertyFromUrl(url, AUTH_PRINCIPAL) == null
+        || Utils.parsePropertyFromUrl(url, AUTH_KYUUBI_SERVER_PRINCIPAL) == null) {
       String urlForPrompt = url.substring(0, url.contains(";") ? url.indexOf(';') : url.length());
       if (username == null) {
         username = beeLine.getConsoleReader().readLine("Enter username for " + urlForPrompt + ": ");
       }
-      props.setProperty(JdbcConnectionParams.AUTH_USER, username);
+      props.setProperty(AUTH_USER, username);
       if (password == null) {
         password =
             beeLine
                 .getConsoleReader()
                 .readLine("Enter password for " + urlForPrompt + ": ", new Character('*'));
       }
-      props.setProperty(JdbcConnectionParams.AUTH_PASSWD, password);
+      props.setProperty(AUTH_PASSWD, password);
     }
 
     try {
@@ -505,6 +499,58 @@ public class KyuubiCommands extends Commands {
     } catch (IOException ioe) {
       return beeLine.error(ioe);
     }
+  }
+
+  @Override
+  public String handleMultiLineCmd(String line) throws IOException {
+    int[] startQuote = {-1};
+    Character mask =
+        (System.getProperty("jline.terminal", "").equals("jline.UnsupportedTerminal"))
+            ? null
+            : jline.console.ConsoleReader.NULL_MASK;
+
+    while (isMultiLine(line) && beeLine.getOpts().isAllowMultiLineCommand()) {
+      StringBuilder prompt = new StringBuilder(beeLine.getPrompt());
+      if (!beeLine.getOpts().isSilent()) {
+        for (int i = 0; i < prompt.length() - 1; i++) {
+          if (prompt.charAt(i) != '>') {
+            prompt.setCharAt(i, i % 2 == 0 ? '.' : ' ');
+          }
+        }
+      }
+      String extra;
+      // avoid NPE below if for some reason -e argument has multi-line command
+      if (beeLine.getConsoleReader() == null) {
+        throw new RuntimeException(
+            "Console reader not initialized. This could happen when there "
+                + "is a multi-line command using -e option and which requires further reading from console");
+      }
+      if (beeLine.getOpts().isSilent() && beeLine.getOpts().getScriptFile() != null) {
+        extra = beeLine.getConsoleReader().readLine(null, mask);
+      } else {
+        extra = beeLine.getConsoleReader().readLine(prompt.toString());
+      }
+
+      if (extra == null) { // it happens when using -f and the line of cmds does not end with ;
+        break;
+      }
+      if (!extra.isEmpty()) {
+        line += "\n" + extra;
+      }
+    }
+    return line;
+  }
+
+  // returns true if statement represented by line is not complete and needs additional reading from
+  // console. Used in handleMultiLineCmd method assumes line would never be null when this method is
+  // called
+  private boolean isMultiLine(String line) {
+    if (line.endsWith(beeLine.getOpts().getDelimiter()) || beeLine.isComment(line)) {
+      return false;
+    }
+    // handles the case like line = show tables; --test comment
+    List<String> cmds = getCmdList(line, false);
+    return cmds.isEmpty() || !cmds.get(cmds.size() - 1).startsWith("--");
   }
 
   static class KyuubiLogRunnable implements Runnable {

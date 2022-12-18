@@ -26,7 +26,6 @@ import scala.concurrent.duration.Duration
 
 import com.google.common.annotations.VisibleForTesting
 import org.apache.hive.service.rpc.thrift._
-import org.apache.thrift.TException
 import org.apache.thrift.protocol.{TBinaryProtocol, TProtocol}
 import org.apache.thrift.transport.TSocket
 
@@ -95,11 +94,11 @@ class KyuubiSyncThriftClient private (
               remoteEngineBroken = false
             } catch {
               case e: Throwable =>
-                warn(s"The engine alive probe fails", e)
+                warn(s"The engine[$engineId] alive probe fails", e)
                 val now = System.currentTimeMillis()
                 if (now - engineLastAlive > engineAliveTimeout) {
-                  error("Mark the engine not alive with no recent alive probe success:" +
-                    s" ${now - engineLastAlive} ms exceeds timeout $engineAliveTimeout ms")
+                  error(s"Mark the engine[$engineId] not alive with no recent alive probe" +
+                    s" success: ${now - engineLastAlive} ms exceeds timeout $engineAliveTimeout ms")
                   remoteEngineBroken = true
                 }
             }
@@ -385,11 +384,11 @@ class KyuubiSyncThriftClient private (
     }
   }
 
-  def getResultSetMetadata(operationHandle: TOperationHandle): TTableSchema = {
+  def getResultSetMetadata(operationHandle: TOperationHandle): TGetResultSetMetadataResp = {
     val req = new TGetResultSetMetadataReq(operationHandle)
     val resp = withLockAcquiredAsyncRequest(GetResultSetMetadata(req))
     ThriftUtils.verifyTStatus(resp.getStatus)
-    resp.getSchema
+    resp
   }
 
   def fetchResults(
@@ -426,33 +425,6 @@ class KyuubiSyncThriftClient private (
 }
 
 private[kyuubi] object KyuubiSyncThriftClient extends Logging {
-
-  private def withRetryingRequestNoLock[T](
-      block: => T,
-      request: String,
-      maxAttempts: Int,
-      remoteEngineBroken: Boolean,
-      isConnectionValid: () => Boolean): (T, Boolean) = {
-    var attemptCount = 1
-
-    var resp: T = null.asInstanceOf[T]
-    var shouldResetEngineBroken = false;
-    while (attemptCount <= maxAttempts && resp == null) {
-      try {
-        resp = block
-        shouldResetEngineBroken = true
-      } catch {
-        case e: TException if attemptCount < maxAttempts && isConnectionValid() =>
-          warn(s"Failed to execute $request after $attemptCount/$maxAttempts times, retrying", e)
-          attemptCount += 1
-          Thread.sleep(100)
-        case e: Throwable =>
-          error(s"Failed to execute $request after $attemptCount/$maxAttempts times, aborting", e)
-          throw e
-      }
-    }
-    (resp, shouldResetEngineBroken)
-  }
 
   private def createTProtocol(
       user: String,

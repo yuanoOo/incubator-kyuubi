@@ -27,11 +27,11 @@ import org.apache.hive.service.rpc.thrift.TProtocolVersion
 import org.apache.kyuubi.client.api.v1.dto.BatchRequest
 import org.apache.kyuubi.config.KyuubiConf
 import org.apache.kyuubi.engine.KyuubiApplicationManager
+import org.apache.kyuubi.engine.spark.SparkProcessBuilder
 import org.apache.kyuubi.events.{EventBus, KyuubiSessionEvent}
 import org.apache.kyuubi.metrics.MetricsConstants.{CONN_OPEN, CONN_TOTAL}
 import org.apache.kyuubi.metrics.MetricsSystem
 import org.apache.kyuubi.operation.OperationState
-import org.apache.kyuubi.server.KyuubiRestFrontendService
 import org.apache.kyuubi.server.metadata.api.Metadata
 import org.apache.kyuubi.session.SessionType.SessionType
 
@@ -58,6 +58,18 @@ class KyuubiBatchSessionImpl(
   }.getOrElse(SessionHandle())
 
   override def createTime: Long = recoveryMetadata.map(_.createTime).getOrElse(super.createTime)
+
+  override def getNoOperationTime: Long = {
+    if (batchJobSubmissionOp != null && !OperationState.isTerminal(
+        batchJobSubmissionOp.getStatus.state)) {
+      0L
+    } else {
+      super.getNoOperationTime
+    }
+  }
+
+  override val sessionIdleTimeoutThreshold: Long =
+    sessionManager.getConf.get(KyuubiConf.BATCH_SESSION_IDLE_TIMEOUT)
 
   // TODO: Support batch conf advisor
   override val normalizedConf: Map[String, String] = {
@@ -100,9 +112,11 @@ class KyuubiBatchSessionImpl(
       batchRequest.getBatchType,
       normalizedConf,
       sessionManager.getConf)
-    KyuubiApplicationManager.checkApplicationAccessPath(
-      batchRequest.getResource,
-      sessionManager.getConf)
+    if (batchRequest.getResource != SparkProcessBuilder.INTERNAL_RESOURCE) {
+      KyuubiApplicationManager.checkApplicationAccessPath(
+        batchRequest.getResource,
+        sessionManager.getConf)
+    }
   }
 
   override def open(): Unit = {
@@ -115,12 +129,10 @@ class KyuubiBatchSessionImpl(
       val metaData = Metadata(
         identifier = handle.identifier.toString,
         sessionType = sessionType,
-        // TODO: support real user
-        realUser = user,
+        realUser = realUser,
         username = user,
         ipAddress = ipAddress,
-        // TODO: support to transfer fe connection url when opening session
-        kyuubiInstance = KyuubiRestFrontendService.getConnectionUrl,
+        kyuubiInstance = connectionUrl,
         state = OperationState.PENDING.toString,
         resource = batchRequest.getResource,
         className = batchRequest.getClassName,
@@ -136,7 +148,7 @@ class KyuubiBatchSessionImpl(
 
     checkSessionAccessPathURIs()
 
-    // we should call super.open before running batch job submission operation
+    // create the operation root directory before running batch job submission operation
     super.open()
 
     runOperation(batchJobSubmissionOp)
@@ -144,6 +156,7 @@ class KyuubiBatchSessionImpl(
 
   override def close(): Unit = {
     super.close()
+    batchJobSubmissionOp.close()
     waitMetadataRequestsRetryCompletion()
     sessionEvent.endTime = System.currentTimeMillis()
     EventBus.post(sessionEvent)

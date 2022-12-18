@@ -23,7 +23,6 @@ import scala.util.Random
 
 import com.codahale.metrics.MetricRegistry
 import com.google.common.annotations.VisibleForTesting
-import org.apache.hadoop.security.UserGroupInformation
 
 import org.apache.kyuubi.{KYUUBI_VERSION, KyuubiSQLException, Logging, Utils}
 import org.apache.kyuubi.config.KyuubiConf
@@ -52,6 +51,7 @@ import org.apache.kyuubi.operation.log.OperationLog
 private[kyuubi] class EngineRef(
     conf: KyuubiConf,
     user: String,
+    primaryGroup: String,
     engineRefId: String,
     engineManager: KyuubiApplicationManager)
   extends Logging {
@@ -83,16 +83,7 @@ private[kyuubi] class EngineRef(
   // Launcher of the engine
   private[kyuubi] val appUser: String = shareLevel match {
     case SERVER => Utils.currentUser
-    case GROUP =>
-      val clientUGI = UserGroupInformation.createRemoteUser(user)
-      // Similar to `clientUGI.getPrimaryGroupName` (avoid IOE) to get the Primary GroupName of
-      // the client user mapping to
-      clientUGI.getGroupNames.headOption match {
-        case Some(primaryGroup) => primaryGroup
-        case None =>
-          warn(s"There is no primary group for $user, use the client user name as group directly")
-          user
-      }
+    case GROUP => primaryGroup
     case _ => user
   }
 
@@ -111,7 +102,8 @@ private[kyuubi] class EngineRef(
             DiscoveryPaths.makePath(
               s"${serverSpace}_${KYUUBI_VERSION}_${shareLevel}_$engineType",
               "seq_num",
-              Array(appUser, clientPoolName))
+              appUser,
+              clientPoolName)
           DiscoveryClientProvider.withDiscoveryClient(conf) { client =>
             client.getAndIncrement(snPath)
           }
@@ -150,8 +142,8 @@ private[kyuubi] class EngineRef(
   private[kyuubi] lazy val engineSpace: String = {
     val commonParent = s"${serverSpace}_${KYUUBI_VERSION}_${shareLevel}_$engineType"
     shareLevel match {
-      case CONNECTION => DiscoveryPaths.makePath(commonParent, appUser, Array(engineRefId))
-      case _ => DiscoveryPaths.makePath(commonParent, appUser, Array(subdomain))
+      case CONNECTION => DiscoveryPaths.makePath(commonParent, appUser, engineRefId)
+      case _ => DiscoveryPaths.makePath(commonParent, appUser, subdomain)
     }
   }
 
@@ -167,7 +159,8 @@ private[kyuubi] class EngineRef(
           DiscoveryPaths.makePath(
             s"${serverSpace}_${shareLevel}_$engineType",
             "lock",
-            Array(appUser, subdomain))
+            appUser,
+            subdomain)
         discoveryClient.tryWithLock(
           lockPath,
           timeout + (LOCK_TIMEOUT_SPAN_FACTOR * timeout).toLong)(f)

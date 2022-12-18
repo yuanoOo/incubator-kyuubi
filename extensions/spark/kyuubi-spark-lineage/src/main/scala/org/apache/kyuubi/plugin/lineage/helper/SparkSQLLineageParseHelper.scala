@@ -20,6 +20,7 @@ package org.apache.kyuubi.plugin.lineage.helper
 import scala.collection.immutable.ListMap
 import scala.util.{Failure, Success, Try}
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, HiveTableRelation}
@@ -29,10 +30,11 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.Count
 import org.apache.spark.sql.catalyst.plans.{LeftAnti, LeftSemi}
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.connector.catalog.{CatalogPlugin, Identifier, TableCatalog}
+import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.columnar.InMemoryRelation
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2ScanRelation
 
-import org.apache.kyuubi.Logging
 import org.apache.kyuubi.plugin.lineage.events.Lineage
 import org.apache.kyuubi.plugin.lineage.helper.SparkListenerHelper.isSparkVersionAtMost
 
@@ -89,6 +91,13 @@ trait LineageParser {
     expression match {
       case s: ScalarSubquery => Seq(s.plan)
       case s => s.children.flatMap(getExpressionSubqueryPlans)
+    }
+  }
+
+  private def findSparkPlanLogicalLink(sparkPlans: Seq[SparkPlan]): Option[LogicalPlan] = {
+    sparkPlans.find(_.logicalLink.nonEmpty) match {
+      case Some(sparkPlan) => sparkPlan.logicalLink
+      case None => findSparkPlanLogicalLink(sparkPlans.flatMap(_.children))
     }
   }
 
@@ -150,12 +159,28 @@ trait LineageParser {
     }
   }
 
+  private def mergeRelationColumnLineage(
+      parentColumnsLineage: AttributeMap[AttributeSet],
+      relationOutput: Seq[Attribute],
+      relationColumnLineage: AttributeMap[AttributeSet]): AttributeMap[AttributeSet] = {
+    val mergedRelationColumnLineage = {
+      relationOutput.foldLeft((ListMap[Attribute, AttributeSet](), relationColumnLineage)) {
+        case ((acc, x), attr) =>
+          (acc + (attr -> x.head._2), x.tail)
+      }._1
+    }
+    joinColumnsLineage(parentColumnsLineage, mergedRelationColumnLineage)
+  }
+
   private def extractColumnsLineage(
       plan: LogicalPlan,
       parentColumnsLineage: AttributeMap[AttributeSet]): AttributeMap[AttributeSet] = {
 
     plan match {
       // For command
+      case p if p.nodeName == "CommandResult" =>
+        val commandPlan = getPlanField[LogicalPlan]("commandLogicalPlan", plan)
+        extractColumnsLineage(commandPlan, parentColumnsLineage)
       case p if p.nodeName == "AlterViewAsCommand" =>
         val query =
           if (isSparkVersionAtMost("3.1")) {
@@ -301,6 +326,21 @@ trait LineageParser {
       case p: LocalRelation =>
         joinRelationColumnLineage(parentColumnsLineage, p.output, Seq(LOCAL_TABLE_IDENTIFIER))
 
+      case p: InMemoryRelation =>
+        // get logical plan from cachedPlan
+        val cachedTableLogical = findSparkPlanLogicalLink(Seq(p.cacheBuilder.cachedPlan))
+        cachedTableLogical match {
+          case Some(logicPlan) =>
+            val relationColumnLineage =
+              extractColumnsLineage(logicPlan, ListMap[Attribute, AttributeSet]())
+            mergeRelationColumnLineage(parentColumnsLineage, p.output, relationColumnLineage)
+          case _ =>
+            joinRelationColumnLineage(
+              parentColumnsLineage,
+              p.output,
+              p.cacheBuilder.tableName.toSeq)
+        }
+
       case p if p.children.isEmpty => ListMap[Attribute, AttributeSet]()
 
       case p =>
@@ -359,7 +399,7 @@ case class SparkSQLLineageParseHelper(sparkSession: SparkSession) extends Lineag
       plan: LogicalPlan): Option[Lineage] = {
     Try(parse(plan)).recover {
       case e: Exception =>
-        warn(s"Extract Statement[$executionId] columns lineage failed.", e)
+        logWarning(s"Extract Statement[$executionId] columns lineage failed.", e)
         throw e
     }.toOption
   }

@@ -17,13 +17,13 @@
 
 package org.apache.kyuubi.plugin.lineage.events
 
-import java.util.concurrent.CountDownLatch
+import java.util.concurrent.{CountDownLatch, TimeUnit}
 
 import org.apache.spark.SparkConf
+import org.apache.spark.scheduler.{SparkListener, SparkListenerEvent}
 import org.apache.spark.sql.SparkListenerExtensionTest
 
 import org.apache.kyuubi.KyuubiFunSuite
-import org.apache.kyuubi.events.EventBus
 import org.apache.kyuubi.plugin.lineage.helper.SparkListenerHelper.isSparkVersionAtMost
 
 class OperationLineageEventSuite extends KyuubiFunSuite with SparkListenerExtensionTest {
@@ -45,13 +45,19 @@ class OperationLineageEventSuite extends KyuubiFunSuite with SparkListenerExtens
   test("operation lineage event capture: for execute sql") {
     val countDownLatch = new CountDownLatch(1)
     var actual: Lineage = null
-    EventBus.register[OperationLineageEvent] { event =>
-      event.lineage.foreach {
-        case lineage if lineage.inputTables.nonEmpty =>
-          actual = lineage
-          countDownLatch.countDown()
+    spark.sparkContext.addSparkListener(new SparkListener {
+      override def onOtherEvent(event: SparkListenerEvent): Unit = {
+        event match {
+          case lineageEvent: OperationLineageEvent =>
+            lineageEvent.lineage.foreach {
+              case lineage if lineage.inputTables.nonEmpty =>
+                actual = lineage
+                countDownLatch.countDown()
+            }
+          case _ =>
+        }
       }
-    }
+    })
 
     withTable("test_table0") { _ =>
       spark.sql("create table test_table0(a string, b string)")
@@ -62,8 +68,51 @@ class OperationLineageEventSuite extends KyuubiFunSuite with SparkListenerExtens
         List(
           ("col0", Set("default.test_table0.a")),
           ("col1", Set("default.test_table0.b"))))
-      countDownLatch.await()
+      countDownLatch.await(20, TimeUnit.SECONDS)
       assert(actual == expected)
+    }
+  }
+
+  test("operation lineage event capture: for `cache table` sql ") {
+    val countDownLatch = new CountDownLatch(1)
+    var executionId: Long = -1
+    val expected = Lineage(
+      List("default.table1", "default.table0"),
+      List(),
+      List(
+        ("aa", Set("default.table1.a")),
+        ("bb", Set("default.table0.b"))))
+
+    spark.sparkContext.addSparkListener(new SparkListener {
+      override def onOtherEvent(event: SparkListenerEvent): Unit = {
+        event match {
+          case lineageEvent: OperationLineageEvent if executionId == lineageEvent.executionId =>
+            lineageEvent.lineage.foreach { lineage =>
+              assert(lineage == expected)
+              countDownLatch.countDown()
+            }
+          case _ =>
+        }
+      }
+    })
+
+    withTable("table0", "table1") { _ =>
+      val ddls =
+        """
+          |create table if not exists table0(a int, b string, c string)
+          |create table if not exists table1(a int, b string, c string)
+          |""".stripMargin
+      ddls.split("\n").filter(_.nonEmpty).foreach(spark.sql)
+      spark.sql("cache table t0_cached select a as a0, b as b0 from table0 where a = 1 ")
+      val sql =
+        """
+          |select b.a as aa, t0_cached.b0 as bb from t0_cached join table1 b on b.a = t0_cached.a0
+          |""".stripMargin
+      val r = spark.sql(sql)
+      executionId = r.queryExecution.id
+      r.collect()
+      countDownLatch.await(20, TimeUnit.SECONDS)
+      assert(countDownLatch.getCount == 0)
     }
   }
 

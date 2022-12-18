@@ -36,10 +36,16 @@ private[kyuubi] case class ConfigBuilder(key: String) {
   private[config] var _onCreate: Option[ConfigEntry[_] => Unit] = None
   private[config] var _type = ""
   private[config] var _internal = false
+  private[config] var _serverOnly = false
   private[config] var _alternatives = List.empty[String]
 
   def internal: ConfigBuilder = {
     _internal = true
+    this
+  }
+
+  def serverOnly: ConfigBuilder = {
+    _serverOnly = true
     this
   }
 
@@ -129,7 +135,14 @@ private[kyuubi] case class ConfigBuilder(key: String) {
 
   def fallbackConf[T](fallback: ConfigEntry[T]): ConfigEntry[T] = {
     val entry =
-      new ConfigEntryFallback[T](key, _alternatives, _doc, _version, _internal, fallback)
+      new ConfigEntryFallback[T](
+        key,
+        _alternatives,
+        _doc,
+        _version,
+        _internal,
+        _serverOnly,
+        fallback)
     _onCreate.foreach(_(entry))
     entry
   }
@@ -195,7 +208,8 @@ private[kyuubi] case class TypedConfigBuilder[T](
       parent._doc,
       parent._version,
       parent._type,
-      parent._internal)
+      parent._internal,
+      parent._serverOnly)
     parent._onCreate.foreach(_(entry))
     entry
   }
@@ -213,7 +227,8 @@ private[kyuubi] case class TypedConfigBuilder[T](
         parent._doc,
         parent._version,
         parent._type,
-        parent._internal)
+        parent._internal,
+        parent._serverOnly)
       parent._onCreate.foreach(_(entry))
       entry
   }
@@ -228,7 +243,8 @@ private[kyuubi] case class TypedConfigBuilder[T](
       parent._doc,
       parent._version,
       parent._type,
-      parent._internal)
+      parent._internal,
+      parent._serverOnly)
     parent._onCreate.foreach(_(entry))
     entry
   }

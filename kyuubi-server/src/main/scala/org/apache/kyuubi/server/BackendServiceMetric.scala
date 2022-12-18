@@ -170,7 +170,8 @@ trait BackendServiceMetric extends BackendService {
     }
   }
 
-  abstract override def getResultSetMetadata(operationHandle: OperationHandle): TTableSchema = {
+  abstract override def getResultSetMetadata(operationHandle: OperationHandle)
+      : TGetResultSetMetadataResp = {
     MetricsSystem.timerTracing(MetricsConstants.BS_GET_RESULT_SET_METADATA) {
       super.getResultSetMetadata(operationHandle)
     }
@@ -183,6 +184,7 @@ trait BackendServiceMetric extends BackendService {
       fetchLog: Boolean): TRowSet = {
     MetricsSystem.timerTracing(MetricsConstants.BS_FETCH_RESULTS) {
       val rowSet = super.fetchResults(operationHandle, orientation, maxRows, fetchLog)
+      // TODO: the statistics are wrong when we enabled the arrow.
       val rowsSize =
         if (rowSet.getColumnsSize > 0) {
           rowSet.getColumns.get(0).getFieldValue match {
